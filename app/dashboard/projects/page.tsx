@@ -1,141 +1,212 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase'
-import ProjectCard from '@/components/ProjectCard'
-import { Plus, FolderOpen } from 'lucide-react'
-import type { Project } from '@/lib/types'
+import Link from 'next/link'
+
+interface Project {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+}
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const supabase = createClient()
-
-  async function loadProjects() {
-    const { data } = await supabase
-      .from('projects')
-      .select('*, competitors(count)')
-      .order('created_at', { ascending: false })
-    setProjects((data as Project[]) ?? [])
-    setLoading(false)
-  }
+  const [projectName, setProjectName] = useState('')
+  const [projectDescription, setProjectDescription] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [fetching, setFetching] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
-    loadProjects()
+    fetchProjects()
   }, [])
 
-  async function createProject(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase
-      .from('projects')
-      .insert({ name, description, user_id: user!.id })
-
-    if (!error) {
-      setName('')
-      setDescription('')
-      setShowForm(false)
-      await loadProjects()
+  async function fetchProjects() {
+    setFetching(true)
+    try {
+      const res = await fetch('/api/projects')
+      if (!res.ok) throw new Error('Failed to fetch projects')
+      const data = await res.json()
+      setProjects(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error fetching projects')
+    } finally {
+      setFetching(false)
     }
-    setSaving(false)
   }
 
-  async function deleteProject(id: string) {
-    await supabase.from('projects').delete().eq('id', id)
-    setProjects((prev) => prev.filter((p) => p.id !== id))
+  async function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault()
+
+    if (!projectName.trim()) {
+      setError('Project name is required')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: projectName.trim(),
+          description: projectDescription.trim() || null,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Failed to create project')
+      }
+
+      const newProject = await res.json()
+
+      setProjects((prev) => [newProject, ...prev])
+      setProjectName('')
+      setProjectDescription('')
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (!confirm(`Delete "${name}"? This will remove all associated competitors.`)) return
+
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setProjects((prev) => prev.filter((p) => p.id !== id))
+    }
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Projects</h1>
-          <p className="text-muted-foreground mt-1">Organize your competitive tracking by product or market</p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2.5 rounded-xl transition-colors text-sm"
-        >
-          <Plus className="w-4 h-4" />
-          New project
-        </button>
+    <div className="space-y-8 max-w-4xl">
+      <div>
+        <h1 className="text-3xl font-bold text-white mb-1">Projects</h1>
+        <p className="text-gray-400">Organize your competitive tracking by product or market</p>
       </div>
 
       {/* Create form */}
-      {showForm && (
-        <form onSubmit={createProject} className="bg-card border border-border rounded-xl p-6 space-y-4">
-          <h3 className="font-semibold text-white text-lg">New project</h3>
+      <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+        <h2 className="text-xl font-semibold text-white mb-4">New project</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-900/50 text-red-200 rounded text-sm border border-red-700">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-4 p-3 bg-green-900/50 text-green-200 rounded text-sm border border-green-700">
+            ✅ Project created successfully!
+          </div>
+        )}
+
+        <form onSubmit={handleCreateProject} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Project name</label>
+            <label className="block text-sm text-gray-300 mb-1.5">Project name *</label>
             <input
               type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              disabled={loading}
               placeholder="e.g. CRM Market 2024"
-              required
-              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50"
+              className="w-full px-4 py-2 bg-slate-700 text-white rounded border border-slate-600 focus:border-blue-500 outline-none disabled:opacity-50"
             />
           </div>
+
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Description (optional)</label>
+            <label className="block text-sm text-gray-300 mb-1.5">Description (optional)</label>
             <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={projectDescription}
+              onChange={(e) => setProjectDescription(e.target.value)}
+              disabled={loading}
               placeholder="Tracking top CRM competitors..."
               rows={3}
-              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none"
+              className="w-full px-4 py-2 bg-slate-700 text-white rounded border border-slate-600 focus:border-blue-500 outline-none disabled:opacity-50 resize-none"
             />
           </div>
-          <div className="flex gap-3">
-            <button
-              type="submit"
-              disabled={saving}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-lg transition-colors text-sm"
-            >
-              {saving ? 'Creating...' : 'Create project'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="text-muted-foreground hover:text-white px-5 py-2 rounded-lg transition-colors text-sm"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
 
-      {/* Projects grid */}
-      {loading ? (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-6 animate-pulse">
-              <div className="h-5 bg-muted rounded w-1/2 mb-3" />
-              <div className="h-4 bg-muted rounded w-3/4 mb-6" />
-              <div className="h-4 bg-muted rounded w-1/3" />
-            </div>
-          ))}
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="bg-card border border-border rounded-xl p-16 text-center">
-          <FolderOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No projects yet</h3>
-          <p className="text-muted-foreground text-sm">Create a project to start tracking competitors.</p>
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((project) => (
-            <ProjectCard key={project.id} project={project} onDelete={deleteProject} />
-          ))}
-        </div>
-      )}
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Creating...' : '+ Create project'}
+          </button>
+        </form>
+      </div>
+
+      {/* Projects list */}
+      <div>
+        <h2 className="text-xl font-semibold text-white mb-4">
+          Your projects
+          {!fetching && (
+            <span className="ml-2 text-sm font-normal text-gray-500">({projects.length})</span>
+          )}
+        </h2>
+
+        {fetching ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[1, 2].map((i) => (
+              <div key={i} className="bg-slate-800 rounded-lg p-6 border border-slate-700 animate-pulse">
+                <div className="h-5 bg-slate-700 rounded w-1/2 mb-3" />
+                <div className="h-4 bg-slate-700 rounded w-3/4" />
+              </div>
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="bg-slate-800 rounded-lg p-12 text-center border border-slate-700">
+            <p className="text-gray-400 mb-2">No projects yet</p>
+            <p className="text-sm text-gray-500">Create your first project above to start tracking competitors</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {projects.map((project) => (
+              <div
+                key={project.id}
+                className="bg-slate-800 rounded-lg p-6 border border-slate-700 hover:border-blue-500/50 transition-colors group"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <Link
+                    href={`/dashboard/projects/${project.id}`}
+                    className="text-lg font-semibold text-white hover:text-blue-400 transition-colors"
+                  >
+                    {project.name}
+                  </Link>
+                  <button
+                    onClick={() => handleDelete(project.id, project.name)}
+                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-all text-xs px-2 py-1 rounded hover:bg-red-900/20"
+                  >
+                    Delete
+                  </button>
+                </div>
+                <p className="text-gray-400 text-sm mb-4 line-clamp-2">
+                  {project.description || 'No description'}
+                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-gray-500">
+                    {new Date(project.created_at).toLocaleDateString()}
+                  </p>
+                  <Link
+                    href={`/dashboard/projects/${project.id}`}
+                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    View →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
