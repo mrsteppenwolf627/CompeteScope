@@ -168,7 +168,7 @@ export function generateDigestEmail(userEmail: string, snapshots: Snapshot[]): s
 
                     <!-- CTA -->
                     <div style="text-align: center; margin: 32px 0 0 0;">
-                      <a href="https://competescope.com/dashboard"
+                      <a href="http://localhost:3000/dashboard"
                          style="display: inline-block; background-color: #1d4ed8; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 15px; padding: 14px 32px; border-radius: 8px;">
                         View full analysis in dashboard →
                       </a>
@@ -184,10 +184,10 @@ export function generateDigestEmail(userEmail: string, snapshots: Snapshot[]): s
                       CompeteScope · AI-powered competitive intelligence for micro-SaaS founders
                     </p>
                     <p style="margin: 0; font-size: 12px; color: #cbd5e1;">
-                      <a href="https://competescope.com/unsubscribe?email=${encodeURIComponent(userEmail)}"
+                      <a href="http://localhost:3000/unsubscribe?email=${encodeURIComponent(userEmail)}"
                          style="color: #94a3b8; text-decoration: underline;">Unsubscribe</a>
                       &nbsp;·&nbsp;
-                      <a href="https://competescope.com/dashboard"
+                      <a href="http://localhost:3000/dashboard"
                          style="color: #94a3b8; text-decoration: underline;">Dashboard</a>
                     </p>
                   </td>
