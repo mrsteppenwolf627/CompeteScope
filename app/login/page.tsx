@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -14,7 +14,9 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
-    const supabase = createClient(
+    // createBrowserClient (not createClient) writes the session to cookies
+    // so the middleware can read it server-side and let the user through
+    const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
@@ -40,7 +42,7 @@ export default function LoginPage() {
 
         {error && (
           <div className="mb-4 p-3 bg-red-900 text-red-100 rounded text-sm">
-            {error}
+            ❌ {error}
           </div>
         )}
 

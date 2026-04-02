@@ -2,11 +2,9 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase'
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function SignupPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -30,7 +28,10 @@ export default function SignupPage() {
 
     setLoading(true)
 
-    const supabase = createClient()
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
     const { data, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -47,8 +48,7 @@ export default function SignupPage() {
 
     // If email confirmation is disabled in Supabase, user is logged in immediately
     if (data.session) {
-      router.push('/dashboard')
-      router.refresh()
+      window.location.href = '/dashboard'
       return
     }
 
