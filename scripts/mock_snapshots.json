@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Stripe",
+    "diff_text": "PRICING PAGE CHANGE:\n- Removed 'Custom' tier from main pricing table\n- Added new 'Starter' plan at $0/mo with 10k API calls\n- Increased 'Growth' plan from $199/mo to $249/mo\n- New banner: 'All plans now include fraud detection'\n- Added 'Compare plans' CTA with detailed feature matrix"
+  },
+  {
+    "name": "Linear",
+    "diff_text": "HOMEPAGE CHANGE:\n- Hero headline changed from 'The issue tracker for high-performance teams' to 'The project management tool for modern software teams'\n- Removed 'issue tracker' from all H1/H2 tags\n- Added new 'Roadmaps' section in product screenshots\n- New logos added: Vercel, Loom, Retool (replaced older logos)\n- CTA button text changed from 'Start for free' to 'Get started — it's free'"
+  },
+  {
+    "name": "Notion",
+    "diff_text": "CHANGELOG UPDATE (2024-01-15):\n- New feature: 'Notion AI Connectors' - connect Slack, Google Drive, GitHub\n- AI can now search across connected apps in natural language\n- Pricing note: AI Connectors included in Business plan ($16/user/mo)\n- Beta: 'Notion Forms' for collecting structured data\n- Performance: 40% faster page loads announced"
+  }
+]
