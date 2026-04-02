@@ -28,8 +28,8 @@ async function createSupabaseClient() {
   )
 }
 
-// POST /api/digest/send — send digest for the authenticated user immediately
-export async function POST(request: NextRequest) {
+// POST /api/digest/send — send digest for the currently authenticated user
+export async function POST(_request: NextRequest) {
   const supabase = await createSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -42,7 +42,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       emailsSent: sent ? 1 : 0,
-      message: sent ? 'Digest sent successfully' : 'No changes in the last 7 days — digest not sent',
+      message: sent
+        ? 'Digest sent successfully'
+        : 'No changes in the last 7 days — digest not sent',
     })
   } catch (err) {
     console.error('Digest POST error:', err)
@@ -53,53 +55,60 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/digest/send?cron_secret=xxx — bulk send for all users (cron job)
-// GET /api/digest/send?cron_secret=xxx&user_id=yyy — send for one user (testing)
+// GET /api/digest/send?cron_secret=xxx            — bulk send (all users)
+// GET /api/digest/send?cron_secret=xxx&user_id=y — single user (for testing)
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const cronSecret = searchParams.get('cron_secret')
   const targetUserId = searchParams.get('user_id')
 
-  const validSecret =
-    process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET
-
-  if (!validSecret) {
+  if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Use service-role key so we can query all users regardless of session
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceKey) {
+    return NextResponse.json(
+      { error: 'SUPABASE_SERVICE_ROLE_KEY not configured' },
+      { status: 500 }
+    )
+  }
+
   const { createClient } = await import('@supabase/supabase-js')
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
 
   try {
-    // Resolve target users
     let targetUsers: { id: string; email: string }[] = []
 
     if (targetUserId) {
+      // Single user — look up via admin API
       const { data, error } = await admin.auth.admin.getUserById(targetUserId)
-      if (error || !data.user) throw new Error('User not found')
-      targetUsers = [{ id: data.user.id, email: data.user.email! }]
+      if (error || !data.user?.email) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      }
+      targetUsers = [{ id: data.user.id, email: data.user.email }]
     } else {
-      // Fetch all distinct user_ids that have at least one project
-      const { data: rows, error } = await admin
+      // All users — list via admin API, then filter to those with projects
+      const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 })
+      if (error) throw new Error(`Failed to list users: ${error.message}`)
+
+      const allUsers = (data.users ?? []).filter((u) => u.email)
+
+      // Fetch all user_ids that have at least one project in a single query
+      const { data: projectRows, error: projError } = await admin
         .from('projects')
         .select('user_id')
-      if (error) throw new Error('Failed to fetch project owners')
+      if (projError) throw new Error(`Failed to fetch projects: ${projError.message}`)
 
-      const uniqueIds = [...new Set((rows ?? []).map((r: { user_id: string }) => r.user_id))]
-
-      // Batch-fetch user emails via Auth Admin API
-      const users = await Promise.all(
-        uniqueIds.map(async (uid) => {
-          const { data } = await admin.auth.admin.getUserById(uid)
-          if (!data.user?.email) return null
-          return { id: uid, email: data.user.email }
-        })
+      const usersWithProjects = new Set(
+        (projectRows ?? []).map((r: { user_id: string }) => r.user_id)
       )
-      targetUsers = users.filter(Boolean) as { id: string; email: string }[]
+
+      targetUsers = allUsers
+        .filter((u) => usersWithProjects.has(u.id))
+        .map((u) => ({ id: u.id, email: u.email! }))
     }
 
     let emailsSent = 0
@@ -109,7 +118,6 @@ export async function GET(request: NextRequest) {
         const sent = await sendDigestForUser(admin, user.id, user.email)
         if (sent) emailsSent++
       } catch (err) {
-        // Log but continue — one user failure shouldn't abort the batch
         console.error(`Digest failed for ${user.email}:`, err)
       }
     }
@@ -131,6 +139,15 @@ export async function GET(request: NextRequest) {
 
 // ─── Core digest logic ────────────────────────────────────────────────────────
 
+interface ProjectRow { id: string; name: string }
+interface CompetitorRow { id: string; name: string; homepage_url: string; project_id: string }
+interface SnapshotRow {
+  id: string
+  competitor_id: string
+  scraped_at: string
+  ai_analysis: string | null
+}
+
 async function sendDigestForUser(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
@@ -139,36 +156,68 @@ async function sendDigestForUser(
 ): Promise<boolean> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
-  // Fetch all snapshots with AI analysis from the last 7 days for this user's competitors
-  const { data: snapshots, error } = await supabase
+  // Step 1 — projects owned by this user
+  const { data: projects, error: projError } = await supabase
+    .from('projects')
+    .select('id, name')
+    .eq('user_id', userId)
+
+  if (projError) throw new Error(`Projects fetch failed: ${projError.message}`)
+  if (!projects || projects.length === 0) return false
+
+  const projectIds = (projects as ProjectRow[]).map((p) => p.id)
+  const projectById = Object.fromEntries((projects as ProjectRow[]).map((p) => [p.id, p]))
+
+  // Step 2 — competitors belonging to those projects
+  const { data: competitors, error: compError } = await supabase
+    .from('competitors')
+    .select('id, name, homepage_url, project_id')
+    .in('project_id', projectIds)
+
+  if (compError) throw new Error(`Competitors fetch failed: ${compError.message}`)
+  if (!competitors || competitors.length === 0) return false
+
+  const competitorIds = (competitors as CompetitorRow[]).map((c) => c.id)
+  const competitorById = Object.fromEntries(
+    (competitors as CompetitorRow[]).map((c) => [c.id, c])
+  )
+
+  // Step 3 — snapshots with AI analysis in the last 7 days
+  const { data: snapshots, error: snapError } = await supabase
     .from('competitor_snapshots')
-    .select(
-      `
-      id,
-      competitor_id,
-      scraped_at,
-      ai_analysis,
-      competitors!inner (
-        id,
-        name,
-        homepage_url,
-        projects!inner (
-          id,
-          name,
-          user_id
-        )
-      )
-    `
-    )
+    .select('id, competitor_id, scraped_at, ai_analysis')
+    .in('competitor_id', competitorIds)
     .gte('scraped_at', sevenDaysAgo)
     .not('ai_analysis', 'is', null)
-    .eq('competitors.projects.user_id', userId)
     .order('scraped_at', { ascending: false })
 
-  if (error) throw new Error(`Snapshot fetch failed: ${error.message}`)
+  if (snapError) throw new Error(`Snapshots fetch failed: ${snapError.message}`)
   if (!snapshots || snapshots.length === 0) return false
 
-  const emailHtml = generateDigestEmail(email, snapshots)
+  // Step 4 — enrich snapshots with nested competitor + project shape the template expects
+  const enriched = (snapshots as SnapshotRow[])
+    .map((snap) => {
+      const competitor = competitorById[snap.competitor_id]
+      if (!competitor) return null
+      const project = projectById[competitor.project_id]
+      if (!project) return null
+      return {
+        ...snap,
+        competitors: {
+          id: competitor.id,
+          name: competitor.name,
+          homepage_url: competitor.homepage_url,
+          projects: { id: project.id, name: project.name },
+        },
+      }
+    })
+    .filter(Boolean)
+
+  if (enriched.length === 0) return false
+
+  // Step 5 — generate and send
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const emailHtml = generateDigestEmail(email, enriched as any)
 
   const { error: sendError } = await resend.emails.send({
     from: 'CompeteScope <hello@competescope.com>',
