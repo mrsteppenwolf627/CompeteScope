@@ -21,7 +21,7 @@ async function createSupabaseClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options as Parameters<typeof cookieStore.set>[2])
             )
-          } catch {}
+          } catch { }
         },
       },
     }
@@ -220,7 +220,7 @@ async function sendDigestForUser(
   const emailHtml = generateDigestEmail(email, enriched as any)
 
   const { error: sendError } = await resend.emails.send({
-    from: 'CompeteScope <hello@competescope.com>',
+    from: 'CompeteScope <aitor@aitoralmu.xyz>',
     to: email,
     subject: '📊 Your weekly competitive intelligence digest',
     html: emailHtml,
